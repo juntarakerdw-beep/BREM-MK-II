@@ -1,0 +1,20 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+Thai:wght@400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { font-family: Inter, 'Noto Sans Thai', system-ui, sans-serif; color: #1f2937; background: #f8fafc; font-synthesis: none; }
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; margin: 0; }
+body { margin: 0; }
+button, input, select { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.seat-btn { transition: transform .15s ease, box-shadow .15s ease; }
+.seat-btn:hover { transform: scale(1.06); box-shadow: 0 4px 10px rgba(0,0,0,.12); }
+@keyframes modalPop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+.modal-pop { animation: modalPop .18s ease-out; }
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.toast-in { animation: toastIn .2s ease-out; }
