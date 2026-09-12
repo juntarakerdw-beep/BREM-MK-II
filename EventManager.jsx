@@ -606,7 +606,8 @@ export default function App() {
     assigning
       ? bookings.find(
           b =>
-            b.id === assigning
+            b.id ===
+            assigning
         )
       : null;
 
@@ -723,9 +724,9 @@ export default function App() {
                 ''
               }${
                 b.time || ''
-            }${
+              }${
                 b.name || ''
-            }`
+              }`
             )
         );
     }, [
@@ -1691,9 +1692,603 @@ export default function App() {
       )}
     </div>;
 
+  /*
+   * ============================================================
+   * LIST VIEW
+   * ============================================================
+   */
+
   const listView =
     <div className="space-y-6">
-      {/* ส่วน List View เดิมของคุณคงเดิมทั้งหมด */}
+
+      {/* ACTION BAR */}
+      <div className="bg-white rounded-2xl shadow-sm border p-4">
+        <div className="flex flex-col md:flex-row gap-3">
+
+          <button
+            type="button"
+            onClick={() =>
+              inputRef.current?.click()
+            }
+            disabled={processingOCR}
+            className="w-full md:w-auto px-5 py-3 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center gap-2 shadow-sm hover:bg-blue-700 disabled:opacity-50"
+          >
+            {processingOCR ? (
+              <>
+                <Loader2
+                  size={19}
+                  className="animate-spin"
+                />
+                กำลังอ่านสลิป...
+              </>
+            ) : (
+              <>
+                <Upload size={19} />
+                + เพิ่มสลิป
+              </>
+            )}
+          </button>
+
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            className="hidden"
+            onChange={upload}
+          />
+
+          <button
+            type="button"
+            onClick={loadData}
+            disabled={syncing}
+            className="w-full md:w-auto px-5 py-3 rounded-xl bg-gray-100 text-gray-700 font-bold flex items-center justify-center gap-2 hover:bg-gray-200 disabled:opacity-50"
+          >
+            <RefreshCw
+              size={18}
+              className={
+                syncing
+                  ? 'animate-spin'
+                  : ''
+              }
+            />
+
+            รีเฟรชข้อมูล
+          </button>
+
+        </div>
+      </div>
+
+      {/* SEARCH AND FILTER */}
+      <div className="bg-white rounded-2xl shadow-sm border p-4">
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+
+          <div className="relative">
+            <Search
+              size={18}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+            />
+
+            <input
+              type="text"
+              value={search}
+              onChange={e =>
+                setSearch(
+                  e.target.value
+                )
+              }
+              placeholder="ค้นหาชื่อ / Booking ID / เบอร์ / ที่นั่ง"
+              className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <select
+            value={filterDate}
+            onChange={e =>
+              setFilterDate(
+                e.target.value
+              )
+            }
+            className="px-4 py-3 rounded-xl border border-gray-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">
+              ทุกวันที่
+            </option>
+
+            {DATES.map(d => (
+              <option
+                key={d}
+                value={d}
+              >
+                {d}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filterTime}
+            onChange={e =>
+              setFilterTime(
+                e.target.value
+              )
+            }
+            className="px-4 py-3 rounded-xl border border-gray-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">
+              ทุกรอบ
+            </option>
+
+            {[
+              ...new Set(
+                Object.values(
+                  ROUND_OPTIONS
+                ).flat()
+              )
+            ].map(t => (
+              <option
+                key={t}
+                value={t}
+              >
+                รอบ {t} น.
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filterStatus}
+            onChange={e =>
+              setFilterStatus(
+                e.target.value
+              )
+            }
+            className="px-4 py-3 rounded-xl border border-gray-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">
+              ทุกสถานะ
+            </option>
+
+            <option value="pending">
+              รอรับบัตร
+            </option>
+
+            <option value="checked_in">
+              รับบัตรแล้ว
+            </option>
+          </select>
+
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-500">
+
+          <div>
+            แสดง{' '}
+            <b className="text-gray-900">
+              {filtered.length}
+            </b>{' '}
+            รายการ
+
+            {bookings.length !==
+              filtered.length && (
+              <>
+                {' '}จาก{' '}
+                <b className="text-gray-900">
+                  {bookings.length}
+                </b>{' '}
+                รายการ
+              </>
+            )}
+          </div>
+
+          {(
+            search ||
+            filterStatus !==
+              'all' ||
+            filterDate !==
+              'all' ||
+            filterTime !==
+              'all'
+          ) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch('');
+                setFilterStatus(
+                  'all'
+                );
+                setFilterDate(
+                  'all'
+                );
+                setFilterTime(
+                  'all'
+                );
+              }}
+              className="text-blue-600 font-bold hover:underline"
+            >
+              ล้างตัวกรอง
+            </button>
+          )}
+
+        </div>
+      </div>
+
+      {/* SUMMARY */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+
+        <div className="bg-white rounded-2xl border shadow-sm p-4">
+          <div className="text-sm text-gray-500">
+            รายการทั้งหมด
+          </div>
+
+          <div className="text-2xl font-black text-gray-900 mt-1">
+            {bookings.length}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border shadow-sm p-4">
+          <div className="text-sm text-gray-500">
+            กำลังรอรับบัตร
+          </div>
+
+          <div className="text-2xl font-black text-amber-600 mt-1">
+            {
+              bookings.filter(
+                b =>
+                  b.status !==
+                  'checked_in'
+              ).length
+            }
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border shadow-sm p-4">
+          <div className="text-sm text-gray-500">
+            รับบัตรแล้ว
+          </div>
+
+          <div className="text-2xl font-black text-green-600 mt-1">
+            {
+              bookings.filter(
+                b =>
+                  b.status ===
+                  'checked_in'
+              ).length
+            }
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border shadow-sm p-4">
+          <div className="text-sm text-gray-500">
+            จำนวนบัตรทั้งหมด
+          </div>
+
+          <div className="text-2xl font-black text-blue-600 mt-1">
+            {bookings.reduce(
+              (sum, b) =>
+                sum +
+                (Number(
+                  b.quantity
+                ) || 0),
+              0
+            )}
+          </div>
+        </div>
+
+      </div>
+
+      {/* BOOKING LIST */}
+      <div className="space-y-4">
+
+        {loading ? (
+
+          <div className="bg-white rounded-2xl border shadow-sm p-10 flex flex-col items-center justify-center text-gray-500">
+
+            <Loader2
+              size={32}
+              className="animate-spin text-blue-600 mb-3"
+            />
+
+            <div className="font-semibold">
+              กำลังโหลดข้อมูล...
+            </div>
+
+          </div>
+
+        ) : filtered.length ===
+          0 ? (
+
+          <div className="bg-white rounded-2xl border shadow-sm p-10 text-center">
+
+            <Users
+              size={42}
+              className="mx-auto text-gray-300 mb-3"
+            />
+
+            <div className="text-lg font-black text-gray-700">
+              ไม่พบรายการจอง
+            </div>
+
+            <div className="text-sm text-gray-400 mt-1">
+              ลองเปลี่ยนคำค้นหาหรือเพิ่มสลิปใหม่
+            </div>
+
+          </div>
+
+        ) : (
+
+          filtered.map(b => {
+
+            const seatCodes =
+              (
+                b.booking_seats ||
+                []
+              )
+                .map(
+                  x =>
+                    x.seats
+                      ?.seat_code
+                )
+                .filter(Boolean);
+
+            const isCheckedIn =
+              b.status ===
+              'checked_in';
+
+            return (
+              <div
+                key={b.id}
+                className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${
+                  isCheckedIn
+                    ? 'border-green-200'
+                    : 'border-gray-200'
+                }`}
+              >
+
+                <div className="p-4 md:p-5">
+
+                  {/* HEADER */}
+                  <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+
+                    <div className="min-w-0 flex-1">
+
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
+
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                            isCheckedIn
+                              ? 'bg-green-100 text-green-700'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}
+                        >
+                          {isCheckedIn
+                            ? 'รับบัตรแล้ว'
+                            : 'รอรับบัตร'}
+                        </span>
+
+                        {b.booking_id && (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600">
+                            {b.booking_id}
+                          </span>
+                        )}
+
+                      </div>
+
+                      <h3 className="text-xl md:text-2xl font-black text-gray-900 break-words">
+                        {b.name ||
+                          'ไม่ระบุชื่อ'}
+                      </h3>
+
+                      {b.phone && (
+                        <div className="text-sm text-gray-500 mt-1">
+                          {b.phone}
+                        </div>
+                      )}
+
+                    </div>
+
+                    {/* ACTION BUTTONS */}
+                    <div className="flex flex-wrap gap-2">
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openSlip(b)
+                        }
+                        disabled={
+                          !b.booking_slips
+                            ?.length
+                        }
+                        className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 font-bold text-sm flex items-center gap-1.5 hover:bg-gray-200 disabled:opacity-40"
+                      >
+                        <ImageIcon
+                          size={16}
+                        />
+                        สลิป
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditing({
+                            ...toForm(b),
+                            id: b.id
+                          })
+                        }
+                        className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 font-bold text-sm flex items-center gap-1.5 hover:bg-blue-100"
+                      >
+                        <Edit3
+                          size={16}
+                        />
+                        แก้ไข
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          startAssign(b)
+                        }
+                        className="px-3 py-2 rounded-lg bg-purple-50 text-purple-700 font-bold text-sm flex items-center gap-1.5 hover:bg-purple-100"
+                      >
+                        <Map
+                          size={16}
+                        />
+                        ที่นั่ง
+                      </button>
+
+                    </div>
+
+                  </div>
+
+                  {/* DETAILS */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5">
+
+                    <div className="rounded-xl bg-gray-50 p-3">
+                      <div className="text-xs text-gray-400 mb-1">
+                        วันที่
+                      </div>
+
+                      <div className="font-bold text-gray-800">
+                        {b.date_label ||
+                          '-'}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-gray-50 p-3">
+                      <div className="text-xs text-gray-400 mb-1">
+                        รอบ
+                      </div>
+
+                      <div className="font-bold text-gray-800">
+                        {b.time
+                          ? `${b.time} น.`
+                          : '-'}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-gray-50 p-3">
+                      <div className="text-xs text-gray-400 mb-1">
+                        สถานที่
+                      </div>
+
+                      <div className="font-bold text-gray-800">
+                        {b.venue ||
+                          '-'}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-gray-50 p-3">
+                      <div className="text-xs text-gray-400 mb-1">
+                        จำนวนบัตร
+                      </div>
+
+                      <div className="font-bold text-gray-800">
+                        {Number(
+                          b.quantity
+                        ) || 0}{' '}
+                        ใบ
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* SEATS + CHECKIN */}
+                  <div className="mt-3 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+
+                    <div className="flex-1">
+
+                      <div className="text-xs text-gray-400 mb-1">
+                        ที่นั่ง
+                      </div>
+
+                      {seatCodes.length >
+                      0 ? (
+
+                        <div className="flex flex-wrap gap-1.5">
+
+                          {seatCodes.map(
+                            code => (
+                              <span
+                                key={code}
+                                className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-sm font-black"
+                              >
+                                {code}
+                              </span>
+                            )
+                          )}
+
+                        </div>
+
+                      ) : (
+
+                        <span className="text-sm text-gray-400">
+                          ยังไม่ได้ Assign ที่นั่ง
+                        </span>
+
+                      )}
+
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          toggleCheckin(
+                            b
+                          )
+                        }
+                        className={`px-4 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 ${
+                          isCheckedIn
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                            : 'bg-green-600 text-white hover:bg-green-700'
+                        }`}
+                      >
+
+                        {isCheckedIn ? (
+                          <>
+                            <Check
+                              size={17}
+                            />
+                            ยกเลิกรับบัตร
+                          </>
+                        ) : (
+                          <>
+                            <UserCheck
+                              size={17}
+                            />
+                            เช็กอิน / รับบัตร
+                          </>
+                        )}
+
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDeleteId(
+                            b.id
+                          )
+                        }
+                        className="px-3 py-2.5 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 font-bold flex items-center gap-2"
+                      >
+                        <Trash2
+                          size={17}
+                        />
+                        ลบ
+                      </button>
+
+                    </div>
+
+                  </div>
+
+                </div>
+
+              </div>
+            );
+          })
+        )}
+
+      </div>
     </div>;
 
   const mapView =
@@ -2091,12 +2686,15 @@ export default function App() {
         {assigningBooking && (
           <div className="px-4 md:px-8 py-4 border-t bg-white">
             <div className="flex flex-wrap justify-center gap-4 text-xs font-bold text-gray-600">
+
               <div className="flex items-center gap-2">
                 <span
                   className="w-5 h-5 rounded-md border-2"
                   style={{
-                    backgroundColor: '#9ca3af',
-                    borderColor: '#6b7280'
+                    backgroundColor:
+                      '#9ca3af',
+                    borderColor:
+                      '#6b7280'
                   }}
                 />
                 ที่นั่งเดิม
@@ -2106,8 +2704,10 @@ export default function App() {
                 <span
                   className="w-5 h-5 rounded-md border-2"
                   style={{
-                    backgroundColor: '#f59e0b',
-                    borderColor: '#d97706'
+                    backgroundColor:
+                      '#f59e0b',
+                    borderColor:
+                      '#d97706'
                   }}
                 />
                 ที่นั่งที่เลือกใหม่
@@ -2122,7 +2722,8 @@ export default function App() {
                 <span
                   className="w-5 h-5 rounded-md"
                   style={{
-                    backgroundColor: '#28b5d3'
+                    backgroundColor:
+                      '#28b5d3'
                   }}
                 />
                 จองแล้ว
@@ -2132,7 +2733,8 @@ export default function App() {
                 <span
                   className="w-5 h-5 rounded-md"
                   style={{
-                    backgroundColor: '#10b981'
+                    backgroundColor:
+                      '#10b981'
                   }}
                 />
                 รับบัตรแล้ว
@@ -2142,22 +2744,29 @@ export default function App() {
                 <span
                   className="w-5 h-5 rounded-md"
                   style={{
-                    backgroundColor: '#c35057'
+                    backgroundColor:
+                      '#c35057'
                   }}
                 />
                 ถูกบล็อก
               </div>
+
             </div>
           </div>
         )}
+
       </div>
     </div>;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-12 text-gray-800">
+
       <header className="bg-white shadow-sm sticky top-0 z-20 border-b">
+
         <div className="max-w-6xl mx-auto px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
+
           <div className="flex items-center gap-2">
+
             <div className="bg-blue-600 p-2 rounded-lg text-white">
               <CheckCircle2
                 size={24}
@@ -2165,11 +2774,13 @@ export default function App() {
             </div>
 
             <div>
+
               <h1 className="text-xl md:text-2xl font-black tracking-tight">
                 Fewfew Event Management
               </h1>
 
               <div className="text-xs text-gray-400 flex items-center gap-1">
+
                 {online ? (
                   <>
                     <Wifi
@@ -2200,11 +2811,14 @@ export default function App() {
                     กำลังซิงก์
                   </>
                 )}
+
               </div>
             </div>
+
           </div>
 
           <div className="flex bg-gray-100 p-1 rounded-xl w-full md:w-auto">
+
             <button
               onClick={() =>
                 setActiveTab(
@@ -2238,13 +2852,16 @@ export default function App() {
 
               แผนผังที่นั่ง
             </button>
+
           </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-4 mt-6">
+
         {error && (
           <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 flex items-start gap-2">
+
             <AlertOctagon
               size={18}
               className="mt-0.5 shrink-0"
@@ -2261,6 +2878,7 @@ export default function App() {
             >
               <X size={18} />
             </button>
+
           </div>
         )}
 
@@ -2268,12 +2886,17 @@ export default function App() {
         'list'
           ? listView
           : mapView}
+
       </main>
 
+      {/* OCR MODAL */}
       {ocrModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+
           <div className="modal-pop bg-white rounded-3xl w-full max-w-5xl overflow-hidden flex flex-col shadow-2xl max-h-[92vh]">
+
             <div className="p-4 md:p-6 border-b flex justify-between items-center bg-gray-50">
+
               <h2 className="text-xl font-bold flex items-center gap-2">
                 <Edit3 className="text-blue-600" />
 
@@ -2290,10 +2913,13 @@ export default function App() {
               >
                 <X size={20} />
               </button>
+
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 md:p-6 flex flex-col md:flex-row gap-6">
+
               <div className="w-full md:w-1/2">
+
                 <p className="font-semibold text-gray-500 text-sm mb-2">
                   รูปสลิป
                   {ocrModal.images
@@ -2303,6 +2929,7 @@ export default function App() {
                 </p>
 
                 <div className="bg-gray-100 rounded-2xl border flex flex-wrap gap-2 p-2 max-h-[500px] overflow-auto">
+
                   {ocrModal.images.map(
                     (
                       img,
@@ -2319,10 +2946,12 @@ export default function App() {
                       />
                     )
                   )}
+
                 </div>
               </div>
 
               <div className="w-full md:w-1/2 space-y-4">
+
                 <p className="font-semibold text-gray-500 text-sm">
                   ข้อมูลที่อ่านได้ (แก้ไขได้ก่อนบันทึก)
                 </p>
@@ -2344,10 +2973,13 @@ export default function App() {
                     ),
                   true
                 )}
+
               </div>
+
             </div>
 
             <div className="p-4 md:p-6 border-t bg-gray-50 flex justify-end gap-3">
+
               <button
                 onClick={() =>
                   setOcrModal(
@@ -2369,6 +3001,7 @@ export default function App() {
                 }
                 className="px-8 py-3 rounded-xl font-bold text-white bg-blue-600 shadow-md flex items-center gap-2 disabled:opacity-50"
               >
+
                 {saveStatus ===
                 'saving' ? (
                   <Loader2
@@ -2385,16 +3018,22 @@ export default function App() {
                 'saving'
                   ? 'กำลังบันทึก...'
                   : 'บันทึกข้อมูล'}
+
               </button>
+
             </div>
           </div>
         </div>
       )}
 
+      {/* EDIT MODAL */}
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+
           <div className="modal-pop bg-white rounded-3xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col">
+
             <div className="p-4 md:p-6 border-b flex justify-between items-center bg-gray-50">
+
               <h2 className="text-xl font-bold flex items-center gap-2">
                 <Edit3 className="text-blue-600" />
 
@@ -2411,9 +3050,11 @@ export default function App() {
               >
                 <X />
               </button>
+
             </div>
 
             <div className="p-4 md:p-6 overflow-y-auto">
+
               {fieldGrid(
                 editing,
                 (k, v) =>
@@ -2424,9 +3065,11 @@ export default function App() {
                     })
                   )
               )}
+
             </div>
 
             <div className="p-4 md:p-6 border-t bg-gray-50 flex justify-end gap-3">
+
               <button
                 onClick={() =>
                   setEditing(
@@ -2454,14 +3097,19 @@ export default function App() {
 
                 บันทึกการแก้ไข
               </button>
+
             </div>
+
           </div>
         </div>
       )}
 
+      {/* DELETE MODAL */}
       {deleteId && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60">
+
           <div className="modal-pop bg-white rounded-3xl w-full max-w-sm p-6 text-center shadow-2xl">
+
             <div className="mx-auto w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mb-4">
               <AlertOctagon
                 size={32}
@@ -2477,6 +3125,7 @@ export default function App() {
             </p>
 
             <div className="flex gap-3">
+
               <button
                 onClick={() =>
                   setDeleteId(
@@ -2496,11 +3145,13 @@ export default function App() {
               >
                 ลบรายการ
               </button>
+
             </div>
           </div>
         </div>
       )}
 
+      {/* IMAGE VIEWER */}
       {viewImage && (
         <div
           className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80"
@@ -2510,6 +3161,7 @@ export default function App() {
             )
           }
         >
+
           <button
             className="absolute top-6 right-6 text-white p-2"
             onClick={() =>
@@ -2529,9 +3181,11 @@ export default function App() {
               e.stopPropagation()
             }
           />
+
         </div>
       )}
 
+      {/* SAVE STATUS */}
       {saveStatus !==
         'idle' && (
         <div
@@ -2545,6 +3199,7 @@ export default function App() {
                 : 'bg-blue-600'
           }`}
         >
+
           {saveStatus ===
           'saving' ? (
             <>
@@ -2573,8 +3228,10 @@ export default function App() {
               บันทึกไม่สำเร็จ
             </>
           )}
+
         </div>
       )}
+
     </div>
   );
 }
