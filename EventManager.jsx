@@ -79,7 +79,8 @@ const EMPTY_FORM = {
   zone: '',
   quantity: '',
   bookingId: '',
-  phone: ''
+  phone: '',
+  seats: []
 };
 
 const FIELDS = [
@@ -101,7 +102,10 @@ const toForm = b => ({
   zone: b.zone || '',
   quantity: String(b.quantity || ''),
   bookingId: b.booking_id || b.bookingId || '',
-  phone: b.phone || ''
+  phone: b.phone || '',
+  seats: Array.isArray(b.requested_seats)
+    ? b.requested_seats
+    : []
 });
 
 function errorText(error) {
@@ -385,6 +389,7 @@ function parseOCRText(rawText, seatRows = []) {
 
   if (seats.length) {
     result.quantity = String(seats.length);
+    result.seats = seats;
   }
 
   // =========================================================
@@ -533,6 +538,9 @@ export default function App() {
     useState([]);
 
   const [originalSeatIds, setOriginalSeatIds] =
+    useState([]);
+
+  const [requestedSeats, setRequestedSeats] =
     useState([]);
 
   const [currentDate, setCurrentDate] =
@@ -1024,12 +1032,21 @@ export default function App() {
               Object.entries(
                 b
               ).filter(
-                ([, v]) => v
+                ([key, v]) =>
+                  key !== 'seats' &&
+                  v
               )
-            )
+            ),
+            seats: [
+              ...new Set([
+                ...(a.seats || []),
+                ...(b.seats || [])
+              ])
+            ]
           }),
           {
-            ...EMPTY_FORM
+            ...EMPTY_FORM,
+            seats: []
           }
         );
 
@@ -1148,6 +1165,13 @@ export default function App() {
               Number(
                 f.quantity
               ),
+
+            requested_seats:
+              Array.isArray(
+                f.seats
+              )
+                ? f.seats
+                : [],
 
             booking_id:
               f.bookingId
@@ -1322,6 +1346,14 @@ export default function App() {
 
     setAssigning(
       b.id
+    );
+
+    setRequestedSeats(
+      Array.isArray(
+        b.requested_seats
+      )
+        ? b.requested_seats
+        : []
     );
 
     const originalIds =
@@ -2845,6 +2877,53 @@ export default function App() {
           </div>
         </div>
 
+        {assigningBooking && (
+          <div className="mx-4 mt-4 rounded-2xl border-2 border-amber-200 bg-amber-50 p-4">
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-base font-black text-gray-900">
+                    🎟️ ต้องเลือก {assigningBooking.quantity} ที่นั่ง
+                  </div>
+
+                  {requestedSeats.length > 0 && (
+                    <div className="mt-1 text-sm font-semibold text-gray-700">
+                      ที่นั่งจากสลิป:{' '}
+                      <span className="text-amber-700">
+                        {requestedSeats.join(', ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  className={`shrink-0 rounded-xl px-3 py-2 text-sm font-black ${
+                    selectedSeatIds.length ===
+                    Number(assigningBooking.quantity)
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-white text-amber-700'
+                  }`}
+                >
+                  {selectedSeatIds.length} / {assigningBooking.quantity}
+                </div>
+              </div>
+
+              {requestedSeats.length > 0 && (
+                <div className="text-xs font-semibold text-amber-700">
+                  กรุณาเลือกที่นั่งตามรายการด้านบน
+                </div>
+              )}
+
+              {selectedSeatIds.length ===
+                Number(assigningBooking.quantity) && (
+                <div className="text-sm font-bold text-green-700">
+                  ✓ เลือกครบแล้ว สามารถกดบันทึกได้
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* INSTRUCTION */}
         <div className="px-4 py-3 text-center text-sm text-gray-500">
           {assigningBooking
@@ -2883,6 +2962,11 @@ export default function App() {
                     const selected =
                       selectedSeatIds.includes(
                         s.id
+                      );
+
+                    const isRequestedSeat =
+                      requestedSeats.includes(
+                        s.seat_code
                       );
 
                     const isOriginalSeat =
@@ -2938,14 +3022,18 @@ export default function App() {
                             ? isOriginalSeat
                               ? `${code} · ที่นั่งเดิมของ Booking นี้ · แตะเพื่อเอาออก`
                               : `${code} · ที่นั่งที่เลือกใหม่ · แตะเพื่อเอาออก`
-                            : `${code} · ${cfg.label}`
+                            : isRequestedSeat
+                              ? `${code} · ที่นั่งที่ต้องเลือก`
+                              : `${code} · ${cfg.label}`
                         }
                         className={`seat-btn w-11 h-11 md:w-14 md:h-14 flex items-center justify-center rounded-xl md:rounded-2xl text-sm md:text-base font-bold border-2 focus:outline-none transition ${
                           selected
                             ? isOriginalSeat
                               ? 'ring-2 ring-gray-400'
                               : 'ring-4 ring-amber-300 scale-105'
-                            : ''
+                            : isRequestedSeat
+                              ? 'ring-4 ring-blue-300 scale-105'
+                              : ''
                         } ${
                           !assigningBooking &&
                           s.status ===
