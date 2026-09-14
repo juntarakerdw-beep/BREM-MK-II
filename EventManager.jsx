@@ -239,35 +239,213 @@ function dataUrlToBlob(dataUrl) {
   );
 }
 
-async function ocrImage(image) {
-  const res =
-    await fetch(
-      '/api/ocr.mjs',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type':
-            'application/json'
-        },
-        body: JSON.stringify({
-          image
-        })
-      }
-    );
 
-  const data =
-    await res
-      .json()
-      .catch(() => ({}));
+function parseOCRText(rawText, seatRows = []) {
+  const original = String(rawText || '');
 
-  if (!res.ok) {
-    throw new Error(
-      data.error ||
-      'OCR ไม่สำเร็จ'
+  const text = original
+    .replace(/\r/g, '\n')
+    .replace(/\t+/g, '\n')
+    .replace(/[ ]{2,}/g, ' ')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+
+  const result = {
+    ...EMPTY_FORM,
+    rawText: original
+  };
+
+  // =========================================================
+  // 1. วันที่ + รอบ
+  // =========================================================
+
+  let match = text.match(
+    /(?:วัน[^\s]+\s*)?ที่\s*(18|19|20)\s*รอบ\s*(\d{1,2}:\d{2})/i
+  );
+
+  if (!match) {
+    match = text.match(
+      /รอบ\s*วันที่\s*(18|19|20)\s*เวลา\s*(\d{1,2}:\d{2})/i
     );
   }
 
-  return data.form || EMPTY_FORM;
+  if (!match) {
+    match = text.match(
+      /รอบ\s*วันที่\s*(18|19|20)\s*(?:เวลา\s*)?(\d{1,2}:\d{2})/i
+    );
+  }
+
+  if (match) {
+    result.date = `${match[1]} ก.ย.`;
+    result.time = match[2];
+  }
+
+  // =========================================================
+  // 2. หา "ที่นั่ง" ก่อน
+  // สำคัญมาก: ห้ามหา seat จาก text ทั้งหมด
+  // เพราะเลขวันที่/เวลาจะถูกนับเป็นที่นั่ง
+  // =========================================================
+
+  let seatText = '';
+
+  const seatLabelMatch = text.match(
+    /ที่นั่ง\s*([A-M]\d{1,2}(?:\s*[-–—]\s*[A-M]?\d{1,2}|\s*[A-M]\d{1,2})*)/i
+  );
+
+  if (seatLabelMatch) {
+    seatText = seatLabelMatch[1]
+      .toUpperCase()
+      .replace(/\s+/g, '');
+  } else {
+    // fallback สำหรับกรณี OCR ตัดคำว่า "ที่นั่ง" ออก
+    // แต่จะหาเฉพาะ pattern ที่เป็น range เท่านั้น
+    const rangeMatch = text.match(
+      /\b([A-M]\d{1,2}[-–—][A-M]?\d{1,2})\b/i
+    );
+
+    if (rangeMatch) {
+      seatText = rangeMatch[1].toUpperCase();
+    }
+  }
+
+  let seats = [];
+
+  // =========================================================
+  // 3. Parse seat
+  // =========================================================
+
+  if (seatText) {
+    const rangeMatch = seatText.match(
+      /^([A-M])(\d{1,2})[-–—]([A-M]?)(\d{1,2})$/i
+    );
+
+    if (rangeMatch) {
+      const row = rangeMatch[1].toUpperCase();
+      const endRow = rangeMatch[3]
+        ? rangeMatch[3].toUpperCase()
+        : row;
+
+      const start = Number(rangeMatch[2]);
+      const end = Number(rangeMatch[4]);
+
+      if (
+        row === endRow &&
+        end >= start &&
+        end - start <= 50
+      ) {
+        seats = Array.from(
+          { length: end - start + 1 },
+          (_, i) => `${row}${start + i}`
+        );
+      }
+    } else {
+      // F7F8 -> ["F7", "F8"]
+      seats = seatText.match(/[A-M]\d{1,2}/g) || [];
+    }
+  }
+
+  seats = [...new Set(seats)];
+
+  // =========================================================
+  // 4. จำนวนบัตร
+  // =========================================================
+
+  if (seats.length) {
+    result.quantity = String(seats.length);
+  }
+
+  // =========================================================
+  // 5. Zone จาก Supabase
+  // ใช้ วันที่ + รอบ + ที่นั่ง เพื่อหาแถวที่ถูกต้อง
+  // =========================================================
+
+  if (seats.length && seatRows.length) {
+    const matchingRows = seatRows.filter(seat => {
+      const rowDate = String(
+        seat.date_label ?? seat.date ?? ''
+      ).trim();
+
+      const rowTime = String(
+        seat.time ?? ''
+      ).trim();
+
+      return (
+        rowDate === result.date &&
+        rowTime === result.time
+      );
+    });
+
+    const zones = seats
+      .map(code => {
+        const found = matchingRows.find(seat => {
+          const seatCode = String(
+            seat.seat_code ??
+            seat.seatCode ??
+            seat.code ??
+            seat.seat ??
+            ''
+          )
+            .trim()
+            .toUpperCase();
+
+          return seatCode === code;
+        });
+
+        return found
+          ? String(
+              found.zone ??
+              found.Zone ??
+              ''
+            )
+              .trim()
+              .toUpperCase()
+          : '';
+      })
+      .filter(Boolean);
+
+    const uniqueZones = [...new Set(zones)];
+
+    if (uniqueZones.length) {
+      result.zone = uniqueZones.join(', ');
+    }
+  }
+
+  // =========================================================
+  // ไม่ต้อง OCR ข้อมูลอื่น
+  // =========================================================
+
+  result.name = '';
+  result.phone = '';
+  result.bookingId = '';
+  result.venue = '';
+
+  return result;
+}
+
+async function ocrImage(image, seatRows = []) {
+  const res = await fetch('/api/ocr', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      image
+    })
+  });
+
+  const data = await res.json();
+
+  console.log('========== OCR TEXT ==========');
+console.log(data.text || '');
+console.log('========== END OCR TEXT ==========');
+
+  if (!res.ok) {
+    throw new Error(
+      data.error || 'OCR ไม่สำเร็จ'
+    );
+  }
+
+  return parseOCRText(data.text || '', seatRows);
 }
 
 export default function App() {
@@ -767,7 +945,8 @@ export default function App() {
         try {
           forms.push(
             await ocrImage(
-              image
+              image,
+              seats
             )
           );
         } catch (err) {
@@ -3056,6 +3235,19 @@ export default function App() {
               </div>
 
             </div>
+
+              {ocrModal.formData.rawText && (
+                <div className="px-4 md:px-6 pb-4">
+                  <div className="rounded-xl border bg-white p-4">
+                    <p className="font-semibold text-gray-500 text-sm mb-2">
+                      Raw OCR
+                    </p>
+                    <pre className="whitespace-pre-wrap text-xs text-gray-700 max-h-48 overflow-auto">
+                      {ocrModal.formData.rawText}
+                    </pre>
+                  </div>
+                </div>
+              )}
 
             <div className="p-4 md:p-6 border-t bg-gray-50 flex justify-end gap-3">
 
