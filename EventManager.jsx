@@ -158,54 +158,87 @@ async function readAsDataURL(file) {
 }
 
 async function compressImage(file) {
+  if (!file || !file.type?.startsWith('image/')) {
+    throw new Error('ไฟล์ที่เลือกไม่ใช่รูปภาพ');
+  }
+
   const raw = await readAsDataURL(file);
 
-  return new Promise(resolve => {
-    const img = new Image();
+  return new Promise((resolve, reject) => {
+    const img = document.createElement('img');
 
     img.onload = () => {
-      const max = 1400;
+      try {
+        const max = 1400;
 
-      const scale = Math.min(
-        1,
-        max / img.width
-      );
+        const scale = Math.min(
+          1,
+          max / img.naturalWidth
+        );
 
-      const c =
-        document.createElement('canvas');
+        const width = Math.max(
+          1,
+          Math.round(img.naturalWidth * scale)
+        );
 
-      c.width = Math.round(
-        img.width * scale
-      );
+        const height = Math.max(
+          1,
+          Math.round(img.naturalHeight * scale)
+        );
 
-      c.height = Math.round(
-        img.height * scale
-      );
+        const c = document.createElement('canvas');
 
-      const ctx = c.getContext('2d');
+        c.width = width;
+        c.height = height;
 
-      if (!ctx) {
-        resolve(raw);
-        return;
-      }
+        const ctx = c.getContext('2d');
 
-      ctx.drawImage(
-        img,
-        0,
-        0,
-        c.width,
-        c.height
-      );
+        if (!ctx) {
+          reject(
+            new Error('ไม่สามารถเตรียมรูปสำหรับ OCR ได้')
+          );
+          return;
+        }
 
-      resolve(
-        c.toDataURL(
+        ctx.drawImage(
+          img,
+          0,
+          0,
+          width,
+          height
+        );
+
+        const result = c.toDataURL(
           'image/jpeg',
           0.82
-        )
-      );
+        );
+
+        if (
+          !result ||
+          !result.startsWith('data:image/jpeg;base64,')
+        ) {
+          reject(
+            new Error('ไม่สามารถแปลงรูปสำหรับ OCR ได้')
+          );
+          return;
+        }
+
+        resolve(result);
+      } catch (error) {
+        reject(
+          new Error(
+            error?.message ||
+            'ไม่สามารถเตรียมรูปสำหรับ OCR ได้'
+          )
+        );
+      }
     };
 
-    img.onerror = () => resolve(raw);
+    img.onerror = () => {
+      reject(
+        new Error('ไม่สามารถอ่านรูปภาพได้')
+      );
+    };
 
     img.src = raw;
   });
@@ -435,10 +468,6 @@ async function ocrImage(image, seatRows = []) {
 
   const data = await res.json();
 
-  console.log('========== OCR TEXT ==========');
-console.log(data.text || '');
-console.log('========== END OCR TEXT ==========');
-
   if (!res.ok) {
     throw new Error(
       data.error || 'OCR ไม่สำเร็จ'
@@ -524,6 +553,9 @@ export default function App() {
     useState('');
 
   const inputRef = useRef(null);
+
+  const [uploadMode, setUploadMode] =
+    useState(null);
 
   const statusTimer = useRef(null);
 
@@ -925,17 +957,41 @@ export default function App() {
       return;
     }
 
-    setProcessingOCR(true);
+    const mode =
+      uploadMode;
 
     setError('');
 
+    if (mode === 'ocr') {
+      setProcessingOCR(true);
+    }
+
     try {
+      const selectedFiles =
+        files.slice(0, 8);
+
       const images =
         await Promise.all(
-          files
-            .slice(0, 8)
-            .map(compressImage)
+          selectedFiles.map(
+            compressImage
+          )
         );
+
+      if (mode === 'manual') {
+        setOcrModal({
+          images,
+          formData: {
+            ...EMPTY_FORM,
+            quantity:
+              String(
+                selectedFiles.length ||
+                1
+              )
+          }
+        });
+
+        return;
+      }
 
       const forms = [];
 
@@ -981,7 +1037,7 @@ export default function App() {
         Number(
           merged.quantity
         ) ||
-        files.length ||
+        selectedFiles.length ||
         1;
 
       setOcrModal({
@@ -1000,6 +1056,8 @@ export default function App() {
       setProcessingOCR(
         false
       );
+
+      setUploadMode(null);
 
       if (inputRef.current) {
         inputRef.current.value =
@@ -1887,7 +1945,7 @@ export default function App() {
           <button
             type="button"
             onClick={() =>
-              inputRef.current?.click()
+              setUploadMode('choose')
             }
             disabled={processingOCR}
             className="w-full md:w-auto px-5 py-3 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center gap-2 shadow-sm hover:bg-blue-700 disabled:opacity-50"
@@ -1937,6 +1995,81 @@ export default function App() {
 
         </div>
       </div>
+
+      {uploadMode === 'choose' && (
+        <div className="bg-white rounded-2xl shadow-sm border p-5">
+          <div className="mb-4">
+            <h3 className="text-lg font-bold text-gray-900">
+              เลือกวิธีเพิ่มสลิป
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              เลือกว่าจะให้ระบบอ่านข้อมูลจากสลิป หรือกรอกข้อมูลเอง
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setUploadMode('ocr');
+                setTimeout(() => {
+                  inputRef.current?.click();
+                }, 0);
+              }}
+              className="p-5 rounded-2xl border-2 border-blue-100 bg-blue-50 text-left hover:border-blue-500 hover:bg-blue-100 transition"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center">
+                  <Upload size={21} />
+                </div>
+
+                <div>
+                  <div className="font-bold text-gray-900">
+                    อัปโหลดแล้วสแกน
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    ให้ OCR อ่านข้อมูลจากสลิปอัตโนมัติ
+                  </div>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setUploadMode('manual');
+                setTimeout(() => {
+                  inputRef.current?.click();
+                }, 0);
+              }}
+              className="p-5 rounded-2xl border-2 border-gray-200 bg-gray-50 text-left hover:border-gray-400 hover:bg-gray-100 transition"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-gray-700 text-white flex items-center justify-center">
+                  ✍️
+                </div>
+
+                <div>
+                  <div className="font-bold text-gray-900">
+                    อัปโหลดแล้วกรอกเอง
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    ไม่ใช้ OCR และกรอกข้อมูลด้วยตัวเอง
+                  </div>
+                </div>
+              </div>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setUploadMode(null)}
+            className="mt-3 w-full py-2 text-sm font-semibold text-gray-500 hover:text-gray-800"
+          >
+            ยกเลิก
+          </button>
+        </div>
+      )}
 
       {/* SEARCH AND FILTER */}
       <div className="bg-white rounded-2xl shadow-sm border p-4">

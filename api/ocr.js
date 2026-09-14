@@ -28,12 +28,13 @@ export default async function handler(req, res) {
         OCREngine: '2',
         isOverlayRequired: 'false',
         detectOrientation: 'true',
-        scale: 'true',
-        isTable: 'true'
+        scale: 'false',
+        isTable: 'false'
       })
     });
 
     const result = await response.json();
+
     if (!response.ok || result.IsErroredOnProcessing) {
       return res.status(500).json({
         error: result.ErrorMessage?.[0] || 'OCR processing failed'
