@@ -41,8 +41,8 @@ const STATUS_CONFIG = {
   available: {
     label: 'ว่าง',
     color: '#54c4a5',
-    bg: '#fff',
-    text: '#54c4a5',
+    bg: 'var(--seat-available-bg, #fff)',
+    text: 'var(--seat-available-text, #54c4a5)',
     icon: <LayoutGrid size={14} />
   },
 
@@ -2759,7 +2759,86 @@ export default function App() {
     </div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-12 text-gray-800">
+    <div className="event-manager-app min-h-screen bg-gray-50 pb-12 text-gray-800">
+
+      <style>{`
+        /* The light palette remains the existing Tailwind design. */
+        .event-manager-app {
+          color-scheme: light dark;
+          --seat-available-bg: #ffffff;
+          --seat-available-text: #54c4a5;
+        }
+
+        /* Follow the device setting automatically; no stored preference or toggle is needed. */
+        @media (prefers-color-scheme: dark) {
+          .event-manager-app {
+            --seat-available-bg: #182334;
+            --seat-available-text: #70e0c1;
+            color: #e5edf8;
+            background-color: #0b1220;
+          }
+
+          .event-manager-app .bg-white { background-color: #162033 !important; }
+          .event-manager-app .bg-gray-50,
+          .event-manager-app .bg-slate-50 { background-color: #0f1726 !important; }
+          .event-manager-app .bg-gray-100 { background-color: #243147 !important; }
+          .event-manager-app .bg-gray-200 { background-color: #34435a !important; }
+          .event-manager-app .bg-gray-900 { background-color: #e5edf8 !important; }
+
+          .event-manager-app .bg-blue-50 { background-color: #102a4b !important; }
+          .event-manager-app .bg-blue-100 { background-color: #163968 !important; }
+          .event-manager-app .bg-green-100 { background-color: #123c32 !important; }
+          .event-manager-app .bg-amber-50 { background-color: #442f0c !important; }
+          .event-manager-app .bg-red-50 { background-color: #481d27 !important; }
+          .event-manager-app .bg-red-100 { background-color: #5b2230 !important; }
+          .event-manager-app .bg-purple-50 { background-color: #30204f !important; }
+
+          .event-manager-app .text-gray-900,
+          .event-manager-app .text-gray-800 { color: #f8fafc !important; }
+          .event-manager-app .text-gray-700,
+          .event-manager-app .text-gray-600 { color: #d6e0ee !important; }
+          .event-manager-app .text-gray-500 { color: #b7c5d8 !important; }
+          .event-manager-app .text-gray-400 { color: #91a4bd !important; }
+          .event-manager-app .text-blue-700 { color: #a9d3ff !important; }
+          .event-manager-app .text-blue-600 { color: #8fc5ff !important; }
+          .event-manager-app .text-green-700 { color: #8ce8c4 !important; }
+          .event-manager-app .text-amber-800,
+          .event-manager-app .text-amber-700 { color: #ffd58a !important; }
+          .event-manager-app .text-red-700,
+          .event-manager-app .text-red-600 { color: #ffadb8 !important; }
+          .event-manager-app .text-purple-700 { color: #d7beff !important; }
+          .event-manager-app .text-gray-900.text-white { color: #0f1726 !important; }
+
+          .event-manager-app .border,
+          .event-manager-app .border-b,
+          .event-manager-app .border-t { border-color: #304058 !important; }
+          .event-manager-app .border-gray-200,
+          .event-manager-app .border-gray-300 { border-color: #465875 !important; }
+          .event-manager-app .border-blue-100 { border-color: #24548a !important; }
+          .event-manager-app .border-red-200 { border-color: #8d3a4a !important; }
+          .event-manager-app .border-amber-200,
+          .event-manager-app .border-amber-300 { border-color: #926717 !important; }
+          .event-manager-app .border-green-200 { border-color: #28775d !important; }
+
+          .event-manager-app input,
+          .event-manager-app select,
+          .event-manager-app textarea {
+            color: #f8fafc !important;
+            background-color: #101a2a !important;
+            border-color: #4a5e7c !important;
+          }
+          .event-manager-app input::placeholder,
+          .event-manager-app textarea::placeholder { color: #8fa1b9 !important; }
+          .event-manager-app option { color: #f8fafc; background: #101a2a; }
+
+          .event-manager-app .hover\\:bg-gray-200:hover { background-color: #34435a !important; }
+          .event-manager-app .hover\\:bg-blue-100:hover { background-color: #1c487d !important; }
+          .event-manager-app .hover\\:bg-green-200:hover { background-color: #195742 !important; }
+          .event-manager-app .hover\\:bg-red-100:hover { background-color: #6d2938 !important; }
+          .event-manager-app .shadow-sm { box-shadow: 0 1px 3px rgb(0 0 0 / .28) !important; }
+          .event-manager-app .seat-btn { box-shadow: 0 1px 2px rgb(0 0 0 / .3); }
+        }
+      `}</style>
 
       <header className="bg-white shadow-sm sticky top-0 z-20 border-b">
 
