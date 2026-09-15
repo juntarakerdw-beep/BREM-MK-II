@@ -3579,14 +3579,16 @@ export default function App() {
         {/* SEAT MAP */}
 <div
   ref={seatMapViewportRef}
-  className="p-6 md:p-12 overflow-x-auto overflow-y-hidden bg-slate-50"
+  className="w-full overflow-x-auto overflow-y-hidden bg-slate-50"
   style={{
-    WebkitOverflowScrolling: 'touch'
+    WebkitOverflowScrolling: 'touch',
+    overscrollBehaviorX: 'contain',
+    touchAction: 'auto'
   }}
 >
   <div
     ref={seatMapSurfaceRef}
-    className="w-max min-w-full mx-auto flex flex-col items-center gap-2 md:gap-3"
+    className="w-max min-w-full px-6 py-6 md:px-12 md:py-12 flex flex-col items-center gap-2 md:gap-3"
   >
             {ROWS.map(row => (
               <div
@@ -3894,7 +3896,12 @@ export default function App() {
         }
       `}</style>
 
-      <header className="bg-white shadow-sm sticky top-0 z-20 border-b">
+      <header
+        className="bg-white shadow-sm sticky top-0 z-20 border-b"
+        style={{
+          paddingTop: 'env(safe-area-inset-top)'
+        }}
+      >
 
         <div className="max-w-6xl mx-auto px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
 
