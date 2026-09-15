@@ -36,8 +36,15 @@ export default async function handler(req, res) {
     const result = await response.json();
 
     if (!response.ok || result.IsErroredOnProcessing) {
+      console.error('OCR.Space error:', JSON.stringify(result, null, 2));
+
       return res.status(500).json({
-        error: result.ErrorMessage?.[0] || 'OCR processing failed'
+        error:
+          result.ErrorMessage?.[0] ||
+          result.ErrorDetails ||
+          result.OCRExitCode ||
+          result.Error ||
+          `OCR processing failed (HTTP ${response.status})`
       });
     }
 

@@ -277,6 +277,7 @@ function dataUrlToBlob(dataUrl) {
 }
 
 
+
 function parseOCRText(rawText, seatRows = []) {
   const original = String(rawText || '');
 
@@ -287,169 +288,560 @@ function parseOCRText(rawText, seatRows = []) {
     .replace(/\n{2,}/g, '\n')
     .trim();
 
+  const compact = text
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    // OCR บางครั้งอ่านตัว B เป็นสัญลักษณ์ ฿
+    // ใช้เฉพาะกรณีที่ตามด้วยเลขที่นั่ง
+    .replace(/฿(?=\d{1,2}(?:\s*[,，]\s*\d{1,2})+)/g, 'B');
+
   const result = {
     ...EMPTY_FORM,
     rawText: original
   };
 
   // =========================================================
-  // 1. วันที่ + รอบ
+  // Helpers
   // =========================================================
 
-  let match = text.match(
-    /(?:วัน[^\s]+\s*)?ที่\s*(18|19|20)\s*รอบ\s*(\d{1,2}:\d{2})/i
-  );
+  const normalizeTime = value => {
+    if (!value) {
+      return '';
+    }
 
-  if (!match) {
-    match = text.match(
-      /รอบ\s*วันที่\s*(18|19|20)\s*เวลา\s*(\d{1,2}:\d{2})/i
+    let time = String(value)
+      .trim()
+      .replace(/[.．]/g, ':');
+
+    const match = time.match(/^(\d{1,2}):(\d{2})$/);
+
+    if (!match) {
+      return '';
+    }
+
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+
+    if (
+      hour < 0 ||
+      hour > 23 ||
+      minute < 0 ||
+      minute > 59
+    ) {
+      return '';
+    }
+
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  };
+
+  const normalizeDate = value => {
+    if (!value) {
+      return '';
+    }
+
+    const day = Number(value);
+
+    if (![18, 19, 20].includes(day)) {
+      return '';
+    }
+
+    return `${day} ก.ย.`;
+  };
+
+  // =========================================================
+  // 1. วันที่ + เวลา
+  // =========================================================
+
+  const dateTimeCandidates = [];
+
+  const addDateTimeCandidate = (day, time) => {
+    const normalizedDate = normalizeDate(day);
+    const normalizedTime = normalizeTime(time);
+
+    if (
+      normalizedDate &&
+      normalizedTime
+    ) {
+      dateTimeCandidates.push({
+        date: normalizedDate,
+        time: normalizedTime
+      });
+    }
+  };
+
+  // รอบวันที่20 เวลา18:00
+  for (const match of compact.matchAll(
+    /รอบ\s*วันที่\s*(18|19|20)\s*(?:เวลา\s*)?(\d{1,2}[:.]\d{2})/gi
+  )) {
+    addDateTimeCandidate(
+      match[1],
+      match[2]
     );
   }
 
-  if (!match) {
-    match = text.match(
-      /รอบ\s*วันที่\s*(18|19|20)\s*(?:เวลา\s*)?(\d{1,2}:\d{2})/i
+  // วันที่18 รอบ 19.00น.
+  for (const match of compact.matchAll(
+    /วันที่\s*(18|19|20)\s*รอบ\s*(\d{1,2}[:.]\d{2})\s*น?\.?/gi
+  )) {
+    addDateTimeCandidate(
+      match[1],
+      match[2]
     );
   }
 
-  if (match) {
-    result.date = `${match[1]} ก.ย.`;
-    result.time = match[2];
+  // วันที่18 เวลา19:00
+  for (const match of compact.matchAll(
+    /วันที่\s*(18|19|20)\s*(?:เวลา\s*)?(\d{1,2}[:.]\d{2})/gi
+  )) {
+    addDateTimeCandidate(
+      match[1],
+      match[2]
+    );
+  }
+
+  // 20/18:00
+  for (const match of compact.matchAll(
+    /\b(18|19|20)\s*\/\s*(\d{1,2}[:.]\d{2})\b/g
+  )) {
+    addDateTimeCandidate(
+      match[1],
+      match[2]
+    );
+  }
+
+  // 20/18.00น.
+  for (const match of compact.matchAll(
+    /\b(18|19|20)\s*\/\s*(\d{1,2}[:.]\d{2})\s*น?\.?/g
+  )) {
+    addDateTimeCandidate(
+      match[1],
+      match[2]
+    );
+  }
+
+  // เลือก candidate แรกที่พบ
+  if (dateTimeCandidates.length) {
+    result.date =
+      dateTimeCandidates[0].date;
+
+    result.time =
+      dateTimeCandidates[0].time;
   }
 
   // =========================================================
-  // 2. หา "ที่นั่ง" ก่อน
-  // สำคัญมาก: ห้ามหา seat จาก text ทั้งหมด
-  // เพราะเลขวันที่/เวลาจะถูกนับเป็นที่นั่ง
+  // 2. สร้างรายการ Seat ที่มีอยู่จริงจาก Supabase
   // =========================================================
 
-  let seatText = '';
+  const knownSeats = new Set();
 
-  const seatLabelMatch = text.match(
-    /ที่นั่ง\s*([A-M]\d{1,2}(?:\s*[-–—]\s*[A-M]?\d{1,2}|\s*[A-M]\d{1,2})*)/i
-  );
+  for (const row of seatRows) {
+    const code = String(
+      row?.seat_code ??
+      row?.seatCode ??
+      row?.code ??
+      row?.seat ??
+      ''
+    )
+      .trim()
+      .toUpperCase();
 
-  if (seatLabelMatch) {
-    seatText = seatLabelMatch[1]
-      .toUpperCase()
-      .replace(/\s+/g, '');
-  } else {
-    // fallback สำหรับกรณี OCR ตัดคำว่า "ที่นั่ง" ออก
-    // แต่จะหาเฉพาะ pattern ที่เป็น range เท่านั้น
-    const rangeMatch = text.match(
-      /\b([A-M]\d{1,2}[-–—][A-M]?\d{1,2})\b/i
-    );
-
-    if (rangeMatch) {
-      seatText = rangeMatch[1].toUpperCase();
+    if (
+      /^[A-M]\d{1,2}$/.test(code)
+    ) {
+      knownSeats.add(code);
     }
   }
 
-  let seats = [];
-
   // =========================================================
-  // 3. Parse seat
+  // 3. Expand seat expression
   // =========================================================
 
-  if (seatText) {
-    const rangeMatch = seatText.match(
-      /^([A-M])(\d{1,2})[-–—]([A-M]?)(\d{1,2})$/i
+  const expandSeatExpression = expression => {
+    if (!expression) {
+      return [];
+    }
+
+    let value = String(expression)
+      .toUpperCase()
+      .replace(/[–—−]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const seats = [];
+
+    // -------------------------------------------------------
+    // B5-B12 / B5–B12
+    // -------------------------------------------------------
+
+    const range = value.match(
+      /^([A-M])\s*(\d{1,2})\s*-\s*([A-M])?\s*(\d{1,2})$/i
     );
 
-    if (rangeMatch) {
-      const row = rangeMatch[1].toUpperCase();
-      const endRow = rangeMatch[3]
-        ? rangeMatch[3].toUpperCase()
-        : row;
+    if (range) {
+      const row = range[1].toUpperCase();
+      const endRow =
+        (range[3] || row).toUpperCase();
 
-      const start = Number(rangeMatch[2]);
-      const end = Number(rangeMatch[4]);
+      const start = Number(range[2]);
+      const end = Number(range[4]);
 
       if (
         row === endRow &&
         end >= start &&
         end - start <= 50
       ) {
-        seats = Array.from(
-          { length: end - start + 1 },
-          (_, i) => `${row}${start + i}`
+        for (
+          let number = start;
+          number <= end;
+          number++
+        ) {
+          seats.push(
+            `${row}${number}`
+          );
+        }
+      }
+
+      return seats;
+    }
+
+    // -------------------------------------------------------
+    // B5,6,7,8
+    // -------------------------------------------------------
+
+    const commaCompact = value.match(
+      /^([A-M])\s*(\d{1,2})(?:\s*,\s*(\d{1,2}))+$/i
+    );
+
+    if (commaCompact) {
+      const row =
+        commaCompact[1].toUpperCase();
+
+      const numbers =
+        value
+          .slice(commaCompact[0].indexOf(commaCompact[1]) + 1)
+          .match(/\d{1,2}/g) || [];
+
+      for (const number of numbers) {
+        seats.push(
+          `${row}${Number(number)}`
         );
       }
-    } else {
-      // F7F8 -> ["F7", "F8"]
-      seats = seatText.match(/[A-M]\d{1,2}/g) || [];
+
+      return seats;
+    }
+
+    // -------------------------------------------------------
+    // F1 F2 / F1,F2
+    // -------------------------------------------------------
+
+    const individual =
+      value.match(
+        /[A-M]\d{1,2}/gi
+      ) || [];
+
+    return individual.map(
+      seat => seat.toUpperCase()
+    );
+  };
+
+  // =========================================================
+  // 4. หา Seat candidates
+  // =========================================================
+
+  const seatCandidates = [];
+
+  const addCandidate = (
+    expression,
+    source,
+    position = 0
+  ) => {
+    const seats =
+      expandSeatExpression(expression);
+
+    if (!seats.length) {
+      return;
+    }
+
+    const uniqueSeats = [
+      ...new Set(seats)
+    ];
+
+    // ถ้ามี seat map ให้ใช้เป็น validation
+    if (knownSeats.size) {
+      const validSeats =
+        uniqueSeats.filter(seat =>
+          knownSeats.has(seat)
+        );
+
+      if (!validSeats.length) {
+        return;
+      }
+
+      seatCandidates.push({
+        seats: validSeats,
+        source,
+        position
+      });
+
+      return;
+    }
+
+    seatCandidates.push({
+      seats: uniqueSeats,
+      source,
+      position
+    });
+  };
+
+  // ---------------------------------------------------------
+  // 4.1 Range เช่น B7-B12 / G7-G8 / A11-A12
+  // ---------------------------------------------------------
+
+  for (const match of compact.matchAll(
+    /\b([A-M]\d{1,2}\s*[-–—−]\s*[A-M]?\d{1,2})\b/gi
+  )) {
+    addCandidate(
+      match[1],
+      'range',
+      match.index || 0
+    );
+  }
+
+  // ---------------------------------------------------------
+  // 4.2 Comma เช่น B5,6,7,8
+  // ---------------------------------------------------------
+
+  for (const match of compact.matchAll(
+    /\b([A-M]\d{1,2}(?:\s*,\s*\d{1,2})+)\b/gi
+  )) {
+    addCandidate(
+      match[1],
+      'comma',
+      match.index || 0
+    );
+  }
+
+  // ---------------------------------------------------------
+  // 4.3 Explicit seat clusters เช่น F1 F2 / C5
+  // ---------------------------------------------------------
+
+  for (const match of compact.matchAll(
+    /\b([A-M]\d{1,2}(?:\s+[A-M]\d{1,2})+)\b/gi
+  )) {
+    addCandidate(
+      match[1],
+      'cluster',
+      match.index || 0
+    );
+  }
+
+  // ---------------------------------------------------------
+  // 4.4 Seat เดี่ยว
+  // ---------------------------------------------------------
+
+  for (const match of compact.matchAll(
+    /\b([A-M]\d{1,2})\b/gi
+  )) {
+    const seat =
+      match[1].toUpperCase();
+
+    // ถ้ามี seat map ต้องเป็น seat ที่มีจริง
+    if (
+      knownSeats.size &&
+      !knownSeats.has(seat)
+    ) {
+      continue;
+    }
+
+    addCandidate(
+      seat,
+      'single',
+      match.index || 0
+    );
+  }
+
+  // =========================================================
+  // 5. เลือก Seat candidate ที่ดีที่สุด
+  // =========================================================
+
+  if (seatCandidates.length) {
+    const scoreCandidate = candidate => {
+      let score = 0;
+
+      if (
+        candidate.source === 'range'
+      ) {
+        score += 50;
+      }
+
+      if (
+        candidate.source === 'comma'
+      ) {
+        score += 45;
+      }
+
+      if (
+        candidate.source === 'cluster'
+      ) {
+        score += 40;
+      }
+
+      if (
+        candidate.source === 'single'
+      ) {
+        score += 10;
+      }
+
+      // อยู่ใกล้คำว่า "ที่นั่ง"
+      const contextStart =
+        Math.max(
+          0,
+          candidate.position - 20
+        );
+
+      const context =
+        compact.slice(
+          contextStart,
+          candidate.position + 80
+        );
+
+      if (
+        /ที่นั่ง|โซน/i.test(context)
+      ) {
+        score += 100;
+      }
+
+      // อยู่ใกล้คำว่า "ใบ"
+      if (
+        /ใบ/.test(context)
+      ) {
+        score += 30;
+      }
+
+      // ตรงกับ seat map มากขึ้น
+      if (knownSeats.size) {
+        score +=
+          candidate.seats.length * 5;
+      }
+
+      return score;
+    };
+
+    const ranked =
+      [...seatCandidates].sort(
+        (a, b) =>
+          scoreCandidate(b) -
+          scoreCandidate(a)
+      );
+
+    const best =
+      ranked[0];
+
+    if (best?.seats?.length) {
+      result.seats = [
+        ...new Set(best.seats)
+      ];
+
+      result.quantity =
+        String(result.seats.length);
     }
   }
 
-  seats = [...new Set(seats)];
-
   // =========================================================
-  // 4. จำนวนบัตร
+  // 6. จำนวนบัตร
   // =========================================================
 
-  if (seats.length) {
-    result.quantity = String(seats.length);
-    result.seats = seats;
+  // ถ้ายังหา seat ไม่ได้ ลองอ่าน "X ใบ"
+  if (!result.seats.length) {
+    const quantityMatch =
+      compact.match(
+        /\b(\d{1,2})\s*ใบ\b/i
+      );
+
+    if (quantityMatch) {
+      result.quantity =
+        String(
+          Number(quantityMatch[1])
+        );
+    }
   }
 
   // =========================================================
-  // 5. Zone จาก Supabase
-  // ใช้ วันที่ + รอบ + ที่นั่ง เพื่อหาแถวที่ถูกต้อง
+  // 7. Zone จาก Supabase
   // =========================================================
 
-  if (seats.length && seatRows.length) {
-    const matchingRows = seatRows.filter(seat => {
-      const rowDate = String(
-        seat.date_label ?? seat.date ?? ''
-      ).trim();
-
-      const rowTime = String(
-        seat.time ?? ''
-      ).trim();
-
-      return (
-        rowDate === result.date &&
-        rowTime === result.time
-      );
-    });
-
-    const zones = seats
-      .map(code => {
-        const found = matchingRows.find(seat => {
-          const seatCode = String(
-            seat.seat_code ??
-            seat.seatCode ??
-            seat.code ??
-            seat.seat ??
+  if (
+    result.seats.length &&
+    seatRows.length
+  ) {
+    const matchingRows =
+      seatRows.filter(seat => {
+        const rowDate =
+          String(
+            seat?.date_label ??
+            seat?.date ??
             ''
-          )
-            .trim()
-            .toUpperCase();
+          ).trim();
 
-          return seatCode === code;
-        });
+        const rowTime =
+          normalizeTime(
+            seat?.time
+          );
 
-        return found
-          ? String(
-              found.zone ??
-              found.Zone ??
-              ''
-            )
-              .trim()
-              .toUpperCase()
-          : '';
-      })
-      .filter(Boolean);
+        return (
+          (!result.date ||
+            rowDate === result.date) &&
+          (!result.time ||
+            rowTime === result.time)
+        );
+      });
 
-    const uniqueZones = [...new Set(zones)];
+    const zones =
+      result.seats
+        .map(code => {
+          const found =
+            matchingRows.find(seat => {
+              const seatCode =
+                String(
+                  seat?.seat_code ??
+                  seat?.seatCode ??
+                  seat?.code ??
+                  seat?.seat ??
+                  ''
+                )
+                  .trim()
+                  .toUpperCase();
+
+              return (
+                seatCode === code
+              );
+            });
+
+          return found
+            ? String(
+                found?.zone ??
+                found?.Zone ??
+                ''
+              )
+                .trim()
+                .toUpperCase()
+            : '';
+        })
+        .filter(Boolean);
+
+    const uniqueZones = [
+      ...new Set(zones)
+    ];
 
     if (uniqueZones.length) {
-      result.zone = uniqueZones.join(', ');
+      result.zone =
+        uniqueZones.join(', ');
     }
   }
 
   // =========================================================
-  // ไม่ต้อง OCR ข้อมูลอื่น
+  // 8. ไม่ OCR ข้อมูลอื่น
   // =========================================================
 
   result.name = '';
@@ -479,7 +871,10 @@ async function ocrImage(image, seatRows = []) {
     );
   }
 
-  return parseOCRText(data.text || '', seatRows);
+  return parseOCRText(
+    data.text || '',
+    seatRows
+  );
 }
 
 export default function App() {
@@ -561,11 +956,500 @@ export default function App() {
     useState('');
 
   const inputRef = useRef(null);
+  // Booking Glass Physical Physics V2
+  const bookingPhysicsRef = useRef(new globalThis.Map());
+
+  const handleBookingPointerMove = (event, id) => {
+    const card = event.currentTarget;
+    const rect = card.getBoundingClientRect();
+
+    let state = bookingPhysicsRef.current.get(id);
+
+    if (!state) {
+      state = {
+        targetX: 0,
+        targetY: 0,
+        currentX: 0,
+        currentY: 0,
+        targetLift: 0,
+        currentLift: 0,
+        targetShadowX: 0,
+        targetShadowY: 8,
+        currentShadowX: 0,
+        currentShadowY: 8,
+        raf: null,
+        active: false
+      };
+
+      bookingPhysicsRef.current.set(id, state);
+    }
+
+    const px = (event.clientX - rect.left) / rect.width;
+    const py = (event.clientY - rect.top) / rect.height;
+
+    // Physical force from pointer position.
+    // Keep the movement restrained so the card feels heavy rather than floaty.
+    state.targetY = (px - 0.5) * 5.5;
+    state.targetX = -(py - 0.5) * 5.5;
+
+    // Small vertical lift creates the sense that the card has weight.
+    state.targetLift = 4;
+
+    // Shadow moves opposite the tilt and grows slightly while lifted.
+    state.targetShadowX = -(px - 0.5) * 10;
+    state.targetShadowY = 11 + Math.abs(py - 0.5) * 3;
+
+    state.active = true;
+
+    if (state.raf) return;
+
+    const animate = () => {
+      const rotateDX = state.targetX - state.currentX;
+      const rotateDY = state.targetY - state.currentY;
+      const liftD = state.targetLift - state.currentLift;
+      const shadowDX =
+        state.targetShadowX - state.currentShadowX;
+      const shadowDY =
+        state.targetShadowY - state.currentShadowY;
+
+      // Different response speeds give the card a heavier physical feel.
+      state.currentX += rotateDX * 0.105;
+      state.currentY += rotateDY * 0.105;
+      state.currentLift += liftD * 0.085;
+      state.currentShadowX += shadowDX * 0.10;
+      state.currentShadowY += shadowDY * 0.10;
+
+      card.style.setProperty(
+        '--glass-rx',
+        `${state.currentX}deg`
+      );
+
+      card.style.setProperty(
+        '--glass-ry',
+        `${state.currentY}deg`
+      );
+
+      card.style.setProperty(
+        '--glass-lift',
+        `${state.currentLift}px`
+      );
+
+      card.style.setProperty(
+        '--glass-shadow-x',
+        `${state.currentShadowX}px`
+      );
+
+      card.style.setProperty(
+        '--glass-shadow-y',
+        `${state.currentShadowY}px`
+      );
+
+      if (
+        state.active ||
+        Math.abs(rotateDX) > 0.01 ||
+        Math.abs(rotateDY) > 0.01 ||
+        Math.abs(liftD) > 0.01 ||
+        Math.abs(shadowDX) > 0.02 ||
+        Math.abs(shadowDY) > 0.02
+      ) {
+        state.raf = requestAnimationFrame(animate);
+      } else {
+        state.raf = null;
+      }
+    };
+
+    state.raf = requestAnimationFrame(animate);
+  };
+
+  const handleBookingPointerLeave = (event, id) => {
+    const card = event.currentTarget;
+    const state = bookingPhysicsRef.current.get(id);
+
+    if (!state) return;
+
+    state.targetX = 0;
+    state.targetY = 0;
+    state.targetLift = 0;
+    state.targetShadowX = 0;
+    state.targetShadowY = 8;
+    state.active = false;
+
+    if (state.raf) return;
+
+    const animate = () => {
+      const rotateDX = -state.currentX;
+      const rotateDY = -state.currentY;
+      const liftD = -state.currentLift;
+      const shadowDX = -state.currentShadowX;
+      const shadowDY = 8 - state.currentShadowY;
+
+      state.currentX += rotateDX * 0.075;
+      state.currentY += rotateDY * 0.075;
+      state.currentLift += liftD * 0.065;
+      state.currentShadowX += shadowDX * 0.075;
+      state.currentShadowY += shadowDY * 0.075;
+
+      card.style.setProperty(
+        '--glass-rx',
+        `${state.currentX}deg`
+      );
+
+      card.style.setProperty(
+        '--glass-ry',
+        `${state.currentY}deg`
+      );
+
+      card.style.setProperty(
+        '--glass-lift',
+        `${state.currentLift}px`
+      );
+
+      card.style.setProperty(
+        '--glass-shadow-x',
+        `${state.currentShadowX}px`
+      );
+
+      card.style.setProperty(
+        '--glass-shadow-y',
+        `${state.currentShadowY}px`
+      );
+
+      if (
+        Math.abs(state.currentX) > 0.01 ||
+        Math.abs(state.currentY) > 0.01 ||
+        Math.abs(state.currentLift) > 0.01 ||
+        Math.abs(state.currentShadowX) > 0.02 ||
+        Math.abs(shadowDY) > 0.02
+      ) {
+        state.raf = requestAnimationFrame(animate);
+      } else {
+        state.currentX = 0;
+        state.currentY = 0;
+        state.currentLift = 0;
+        state.currentShadowX = 0;
+        state.currentShadowY = 8;
+        state.raf = null;
+      }
+    };
+
+    state.raf = requestAnimationFrame(animate);
+  };
+
+
+  const seatMapViewportRef = useRef(null);
+  const seatMapSurfaceRef = useRef(null);
+  const seatMapPhysicsRef = useRef({
+    x: 0,
+    velocityX: 0,
+    dragging: false,
+    dragged: false,
+    startX: 0,
+    startOffsetX: 0,
+    lastX: 0,
+    lastTime: 0,
+    raf: null
+  });
 
   const [uploadMode, setUploadMode] =
     useState(null);
 
   const statusTimer = useRef(null);
+
+   const applySeatMapTransform = () => {
+    const surface =
+      seatMapSurfaceRef.current;
+
+    if (!surface) {
+      return;
+    }
+
+    const {
+      x
+    } =
+      seatMapPhysicsRef.current;
+
+    surface.style.transform =
+      `translate3d(${x}px, 0, 0)`;
+  };
+
+  const stopSeatMapAnimation = () => {
+    const physics =
+      seatMapPhysicsRef.current;
+
+    if (physics.raf) {
+      cancelAnimationFrame(
+        physics.raf
+      );
+
+      physics.raf = null;
+    }
+  };
+
+  const getSeatMapBounds = () => {
+    const viewport =
+      seatMapViewportRef.current;
+
+    const surface =
+      seatMapSurfaceRef.current;
+
+    if (!viewport || !surface) {
+      return {
+        min: 0,
+        max: 0
+      };
+    }
+
+    const viewportWidth =
+      viewport.clientWidth;
+
+    const surfaceWidth =
+      surface.scrollWidth;
+
+    const overflow =
+      surfaceWidth -
+      viewportWidth;
+
+    return {
+      min:
+        overflow > 0
+          ? -overflow
+          : 0,
+      max: 0
+    };
+  };
+
+  const animateSeatMap = () => {
+    const physics =
+      seatMapPhysicsRef.current;
+
+    const {
+      min,
+      max
+    } =
+      getSeatMapBounds();
+
+    physics.x +=
+      physics.velocityX;
+
+    if (
+      physics.x > max
+    ) {
+      physics.x =
+        max +
+        (physics.x - max) *
+          0.35;
+
+      physics.velocityX *=
+        0.55;
+    }
+
+    if (
+      physics.x < min
+    ) {
+      physics.x =
+        min +
+        (physics.x - min) *
+          0.35;
+
+      physics.velocityX *=
+        0.55;
+    }
+
+    physics.velocityX *=
+      0.94;
+
+    applySeatMapTransform();
+
+    if (
+      Math.abs(
+        physics.velocityX
+      ) > 0.05 ||
+      physics.x > max + 0.5 ||
+      physics.x < min - 0.5
+    ) {
+      physics.raf =
+        requestAnimationFrame(
+          animateSeatMap
+        );
+
+      return;
+    }
+
+    if (physics.x > max) {
+      physics.x +=
+        (max - physics.x) *
+        0.22;
+    }
+
+    if (physics.x < min) {
+      physics.x +=
+        (min - physics.x) *
+        0.22;
+    }
+
+    if (
+      Math.abs(
+        physics.x - max
+      ) > 0.1 &&
+      Math.abs(
+        physics.x - min
+      ) > 0.1
+    ) {
+      physics.raf =
+        requestAnimationFrame(
+          animateSeatMap
+        );
+
+      return;
+    }
+
+    physics.velocityX = 0;
+    physics.raf = null;
+
+    applySeatMapTransform();
+  };
+
+  const startSeatMapInertia = () => {
+    stopSeatMapAnimation();
+
+    seatMapPhysicsRef.current.raf =
+      requestAnimationFrame(
+        animateSeatMap
+      );
+  };
+
+  const handleSeatMapPointerDown =
+    event => {
+      if (
+        event.pointerType ===
+          'mouse' &&
+        event.button !== 0
+      ) {
+        return;
+      }
+
+      stopSeatMapAnimation();
+
+      const physics =
+        seatMapPhysicsRef.current;
+
+      physics.dragging = true;
+      physics.dragged = false;
+      physics.startX =
+        event.clientX;
+      physics.startOffsetX =
+        physics.x;
+      physics.lastX =
+        event.clientX;
+      physics.lastTime =
+        performance.now();
+
+      event.currentTarget.setPointerCapture(
+        event.pointerId
+      );
+    };
+
+  const handleSeatMapPointerMove =
+    event => {
+      const physics =
+        seatMapPhysicsRef.current;
+
+      if (!physics.dragging) {
+        return;
+      }
+
+      const now =
+        performance.now();
+
+      const deltaX =
+        event.clientX -
+        physics.lastX;
+
+      const totalDeltaX =
+        event.clientX -
+        physics.startX;
+
+      if (
+        Math.abs(
+          totalDeltaX
+        ) > 6
+      ) {
+        physics.dragged = true;
+      }
+
+      const elapsed =
+        Math.max(
+          now -
+            physics.lastTime,
+          1
+        );
+
+      physics.velocityX =
+        deltaX /
+        elapsed *
+        16;
+
+      physics.x =
+        physics.startOffsetX +
+        totalDeltaX;
+
+      const {
+        min,
+        max
+      } =
+        getSeatMapBounds();
+
+      if (
+        physics.x > max
+      ) {
+        physics.x =
+          max +
+          (physics.x - max) *
+            0.35;
+      }
+
+      if (
+        physics.x < min
+      ) {
+        physics.x =
+          min +
+          (physics.x - min) *
+            0.35;
+      }
+
+      physics.lastX =
+        event.clientX;
+      physics.lastTime =
+        now;
+
+      applySeatMapTransform();
+    };
+
+  const handleSeatMapPointerUp =
+    event => {
+      const physics =
+        seatMapPhysicsRef.current;
+
+      if (!physics.dragging) {
+        return;
+      }
+
+      physics.dragging = false;
+
+      try {
+        event.currentTarget.releasePointerCapture(
+          event.pointerId
+        );
+      } catch {}
+
+      if (physics.dragged) {
+        startSeatMapInertia();
+
+        setTimeout(() => {
+          physics.dragged = false;
+        }, 0);
+      }
+    };
 
   const flash = s => {
     setSaveStatus(s);
@@ -1971,8 +2855,9 @@ export default function App() {
     <div className="space-y-6">
 
       {/* ACTION BAR */}
-      <div className="bg-white rounded-2xl shadow-sm border p-4">
-        <div className="flex flex-col md:flex-row gap-3">
+      <div className="relative rounded-[24px] border border-white/70 dark:border-white/10 bg-white/[0.72] dark:bg-white/[0.055] backdrop-blur-[24px] backdrop-saturate-[160%] shadow-[0_10px_30px_-18px_rgba(0,0,0,0.18)] dark:shadow-[0_16px_34px_-18px_rgba(0,0,0,0.55)] p-4">
+        <div className="pointer-events-none absolute inset-[1px] rounded-[23px] border border-white/60 dark:border-white/10" />
+        <div className="relative z-10 flex flex-col md:flex-row gap-3">
 
           <button
             type="button"
@@ -1980,7 +2865,7 @@ export default function App() {
               setUploadMode('choose')
             }
             disabled={processingOCR}
-            className="w-full md:w-auto px-5 py-3 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center gap-2 shadow-sm hover:bg-blue-700 disabled:opacity-50"
+            className="group w-full md:w-auto px-5 py-3 rounded-xl bg-blue-600 text-white font-bold flex items-center justify-center gap-2 shadow-[0_8px_18px_-10px_rgba(37,99,235,0.65)] transition-[transform,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-[2px] hover:shadow-[0_14px_24px_-11px_rgba(37,99,235,0.7)] active:translate-y-[1px] disabled:opacity-50"
           >
             {processingOCR ? (
               <>
@@ -2011,7 +2896,7 @@ export default function App() {
             type="button"
             onClick={loadData}
             disabled={syncing}
-            className="w-full md:w-auto px-5 py-3 rounded-xl bg-gray-100 text-gray-700 font-bold flex items-center justify-center gap-2 hover:bg-gray-200 disabled:opacity-50"
+            className="w-full md:w-auto px-5 py-3 rounded-xl bg-gray-100 dark:bg-white/[0.07] text-gray-700 dark:text-gray-200 font-bold flex items-center justify-center gap-2 border border-transparent dark:border-white/10 hover:bg-gray-200 dark:hover:bg-white/[0.11] disabled:opacity-50 transition-colors duration-200"
           >
             <RefreshCw
               size={18}
@@ -2029,12 +2914,21 @@ export default function App() {
       </div>
 
       {uploadMode === 'choose' && (
-        <div className="bg-white rounded-2xl shadow-sm border p-5">
+        <div className="relative overflow-hidden rounded-[26px] border border-white/75 dark:border-white/10 bg-white/[0.62] dark:bg-[#17191d]/[0.72] backdrop-blur-[30px] backdrop-saturate-[175%] shadow-[0_22px_55px_-28px_rgba(0,0,0,0.30)] dark:shadow-[0_24px_60px_-28px_rgba(0,0,0,0.65)] p-5 transition-[transform,box-shadow,background-color] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(135deg, rgba(255,255,255,0.42) 0%, rgba(255,255,255,0.10) 24%, transparent 48%, rgba(255,255,255,0.08) 100%)'
+            }}
+          />
+          <div className="pointer-events-none absolute inset-[1px] rounded-[25px] border border-white/55 dark:border-white/[0.08]" />
+          <div className="relative z-10">
           <div className="mb-4">
-            <h3 className="text-lg font-bold text-gray-900">
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white">
               เลือกวิธีเพิ่มสลิป
             </h3>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
               เลือกว่าจะให้ระบบอ่านข้อมูลจากสลิป หรือกรอกข้อมูลเอง
             </p>
           </div>
@@ -2048,7 +2942,7 @@ export default function App() {
                   inputRef.current?.click();
                 }, 0);
               }}
-              className="p-5 rounded-2xl border-2 border-blue-100 bg-blue-50 text-left hover:border-blue-500 hover:bg-blue-100 transition"
+              className="group p-5 rounded-[20px] border border-blue-200/70 dark:border-blue-400/20 bg-blue-500/[0.075] dark:bg-blue-400/[0.075] text-left transition-[transform,box-shadow,background-color,border-color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-[3px] hover:border-blue-300 dark:hover:border-blue-400/35 hover:bg-blue-500/[0.11] dark:hover:bg-blue-400/[0.12] hover:shadow-[0_14px_28px_-18px_rgba(37,99,235,0.38)] active:translate-y-0"
             >
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center">
@@ -2056,10 +2950,10 @@ export default function App() {
                 </div>
 
                 <div>
-                  <div className="font-bold text-gray-900">
+                  <div className="font-bold text-gray-900 dark:text-white">
                     อัปโหลดแล้วสแกน
                   </div>
-                  <div className="text-sm text-gray-500">
+                  <div className="text-sm text-gray-500 dark:text-gray-400">
                     ให้ OCR อ่านข้อมูลจากสลิปอัตโนมัติ
                   </div>
                 </div>
@@ -2074,7 +2968,7 @@ export default function App() {
                   inputRef.current?.click();
                 }, 0);
               }}
-              className="p-5 rounded-2xl border-2 border-gray-200 bg-gray-50 text-left hover:border-gray-400 hover:bg-gray-100 transition"
+              className="group p-5 rounded-[20px] border border-gray-200/80 dark:border-white/10 bg-white/[0.30] dark:bg-white/[0.035] text-left transition-[transform,box-shadow,background-color,border-color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-[3px] hover:border-gray-300 dark:hover:border-white/20 hover:bg-white/[0.48] dark:hover:bg-white/[0.07] hover:shadow-[0_14px_28px_-18px_rgba(0,0,0,0.22)] dark:hover:shadow-[0_16px_30px_-18px_rgba(0,0,0,0.50)] active:translate-y-0"
             >
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-xl bg-gray-700 text-white flex items-center justify-center">
@@ -2082,10 +2976,10 @@ export default function App() {
                 </div>
 
                 <div>
-                  <div className="font-bold text-gray-900">
+                  <div className="font-bold text-gray-900 dark:text-white">
                     อัปโหลดแล้วกรอกเอง
                   </div>
-                  <div className="text-sm text-gray-500">
+                  <div className="text-sm text-gray-500 dark:text-gray-400">
                     ไม่ใช้ OCR และกรอกข้อมูลด้วยตัวเอง
                   </div>
                 </div>
@@ -2096,10 +2990,11 @@ export default function App() {
           <button
             type="button"
             onClick={() => setUploadMode(null)}
-            className="mt-3 w-full py-2 text-sm font-semibold text-gray-500 hover:text-gray-800"
+            className="mt-3 w-full py-2 text-sm font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white transition-colors duration-200"
           >
             ยกเลิก
           </button>
+          </div>
         </div>
       )}
 
@@ -2260,7 +3155,7 @@ export default function App() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
 
         <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm text-gray-500">
+          <div className="text-sm text-gray-500 dark:text-gray-400">
             รายการทั้งหมด
           </div>
 
@@ -2270,7 +3165,7 @@ export default function App() {
         </div>
 
         <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm text-gray-500">
+          <div className="text-sm text-gray-500 dark:text-gray-400">
             กำลังรอรับบัตร
           </div>
 
@@ -2286,7 +3181,7 @@ export default function App() {
         </div>
 
         <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm text-gray-500">
+          <div className="text-sm text-gray-500 dark:text-gray-400">
             รับบัตรแล้ว
           </div>
 
@@ -2302,7 +3197,7 @@ export default function App() {
         </div>
 
         <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm text-gray-500">
+          <div className="text-sm text-gray-500 dark:text-gray-400">
             จำนวนบัตรทั้งหมด
           </div>
 
@@ -2321,7 +3216,16 @@ export default function App() {
       </div>
 
       {/* BOOKING LIST */}
-      <div className="space-y-4">
+      <div className="relative space-y-4 rounded-[32px] p-3 md:p-4 overflow-hidden">
+        <div
+          className="pointer-events-none absolute inset-0 -z-10"
+          style={{
+            background:
+              'radial-gradient(ellipse 520px 360px at 8% 12%, rgba(120,160,255,0.13), transparent 70%), radial-gradient(ellipse 460px 340px at 92% 76%, rgba(120,220,190,0.10), transparent 70%), radial-gradient(ellipse 380px 280px at 52% 48%, rgba(180,140,255,0.055), transparent 72%)',
+            filter: 'blur(28px)',
+            transform: 'scale(1.12)'
+          }}
+        />
 
         {loading ? (
 
@@ -2381,12 +3285,60 @@ export default function App() {
             return (
               <div
                 key={b.id}
-                className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${
+                onPointerMove={(event) =>
+                  handleBookingPointerMove(event, b.id)
+                }
+                onPointerLeave={(event) =>
+                  handleBookingPointerLeave(event, b.id)
+                }
+                style={{
+                  '--glass-rx': '0deg',
+                  '--glass-ry': '0deg',
+                  '--glass-lift': '0px',
+                  '--glass-light-x': '50%',
+                  '--glass-light-y': '35%',
+                  '--glass-shadow-x': '0px',
+                  '--glass-shadow-y': '8px'
+                }}
+                className={`group relative overflow-hidden
+                rounded-[24px] border
+                bg-white/[0.075]
+                backdrop-blur-[32px]
+                backdrop-saturate-[180%]
+                backdrop-contrast-[110%]
+                [perspective:1200px]
+                [transform-style:preserve-3d]
+                [transform:translate3d(0,calc(var(--glass-lift,0px)*-1),0)_rotateX(var(--glass-rx))_rotateY(var(--glass-ry))]
+                transition-[box-shadow,border-color,background-color]
+                duration-300 ease-out
+                shadow-[var(--glass-shadow-x)_var(--glass-shadow-y)_35px_-14px_rgba(0,0,0,0.20)]
+                hover:shadow-[var(--glass-shadow-x)_calc(var(--glass-shadow-y)+7px)_45px_-15px_rgba(0,0,0,0.24)]
+                hover:bg-white/[0.09]
+                ${
                   isCheckedIn
                     ? 'border-green-200'
-                    : 'border-gray-200'
+                    : 'border-white/35'
                 }`}
               >
+                <div
+                  className="pointer-events-none absolute inset-0 z-0"
+                  style={{
+                    background:
+                      'linear-gradient(135deg, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.10) 14%, transparent 36%, transparent 68%, rgba(255,255,255,0.07) 100%)'
+                  }}
+                />
+
+                <div
+                  className="pointer-events-none absolute inset-[1px] z-0 rounded-[23px] border border-white/25"
+                  style={{
+                    background:
+                      'linear-gradient(180deg, rgba(255,255,255,0.20) 0%, transparent 15%, transparent 82%, rgba(255,255,255,0.06) 100%)',
+                    boxShadow:
+                      'inset 0 1px 0 rgba(255,255,255,0.48), inset 1px 0 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(255,255,255,0.07)'
+                  }}
+                />
+
+                <div className="relative z-10">
 
                 <div className="p-4 md:p-5">
 
@@ -2423,7 +3375,7 @@ export default function App() {
                       </h3>
 
                       {b.phone && (
-                        <div className="text-sm text-gray-500 mt-1">
+                        <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                           {b.phone}
                         </div>
                       )}
@@ -2627,6 +3579,7 @@ export default function App() {
 
                 </div>
 
+                </div>
               </div>
             );
           })
@@ -2774,7 +3727,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-50 border">
-            <span className="text-sm text-gray-500">
+            <span className="text-sm text-gray-500 dark:text-gray-400">
               ไม่ว่างแล้ว
             </span>
 
@@ -2932,8 +3885,25 @@ export default function App() {
         </div>
 
         {/* SEAT MAP */}
-        <div className="p-6 md:p-12 overflow-x-auto bg-slate-50">
-          <div className="min-w-fit mx-auto flex flex-col items-center gap-2 md:gap-3">
+<div
+  ref={seatMapViewportRef}
+  className="p-6 md:p-12 overflow-hidden bg-slate-50"
+  onPointerDown={handleSeatMapPointerDown}
+  onPointerMove={handleSeatMapPointerMove}
+  onPointerUp={handleSeatMapPointerUp}
+  onPointerCancel={handleSeatMapPointerUp}
+  style={{
+    touchAction: 'pan-y',
+    cursor: 'grab'
+  }}
+>
+  <div
+    ref={seatMapSurfaceRef}
+    className="min-w-fit mx-auto flex flex-col items-center gap-2 md:gap-3"
+    style={{
+      willChange: 'transform'
+    }}
+  >
             {ROWS.map(row => (
               <div
                 key={row}
@@ -3231,10 +4201,10 @@ export default function App() {
           .event-manager-app textarea::placeholder { color: #8fa1b9 !important; }
           .event-manager-app option { color: #f8fafc; background: #101a2a; }
 
-          .event-manager-app .hover\\:bg-gray-200:hover { background-color: #34435a !important; }
-          .event-manager-app .hover\\:bg-blue-100:hover { background-color: #1c487d !important; }
-          .event-manager-app .hover\\:bg-green-200:hover { background-color: #195742 !important; }
-          .event-manager-app .hover\\:bg-red-100:hover { background-color: #6d2938 !important; }
+          .event-manager-app .hover:bg-gray-200:hover { background-color: #34435a !important; }
+          .event-manager-app .hover:bg-blue-100:hover { background-color: #1c487d !important; }
+          .event-manager-app .hover:bg-green-200:hover { background-color: #195742 !important; }
+          .event-manager-app .hover:bg-red-100:hover { background-color: #6d2938 !important; }
           .event-manager-app .shadow-sm { box-shadow: 0 1px 3px rgb(0 0 0 / .28) !important; }
           .event-manager-app .seat-btn { box-shadow: 0 1px 2px rgb(0 0 0 / .3); }
         }
@@ -3457,18 +4427,7 @@ export default function App() {
 
             </div>
 
-              {ocrModal.formData.rawText && (
-                <div className="px-4 md:px-6 pb-4">
-                  <div className="rounded-xl border bg-white p-4">
-                    <p className="font-semibold text-gray-500 text-sm mb-2">
-                      Raw OCR
-                    </p>
-                    <pre className="whitespace-pre-wrap text-xs text-gray-700 max-h-48 overflow-auto">
-                      {ocrModal.formData.rawText}
-                    </pre>
-                  </div>
-                </div>
-              )}
+
 
             <div className="p-4 md:p-6 border-t bg-gray-50 flex justify-end gap-3">
 
