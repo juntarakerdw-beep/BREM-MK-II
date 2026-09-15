@@ -1,0 +1,19 @@
+{
+  "name": "BREM MK II",
+  "short_name": "BREM",
+  "description": "BREM MK II Event Management",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/brem-mk2-icon-light.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
