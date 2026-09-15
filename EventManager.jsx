@@ -2638,7 +2638,7 @@ export default function App() {
             >
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center">
-                  <Upload size={21} />
+                  <Upload size={21} className="shrink-0" />
                 </div>
 
                 <div>
@@ -2664,7 +2664,7 @@ export default function App() {
             >
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-xl bg-gray-700 text-white flex items-center justify-center">
-                  ✍️
+                  <Edit3 size={21} className="shrink-0" />
                 </div>
 
                 <div>
