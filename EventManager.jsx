@@ -853,6 +853,10 @@ function parseOCRText(rawText, seatRows = []) {
 }
 
 async function ocrImage(image, seatRows = []) {
+  if (!image || typeof image !== 'string') {
+    throw new Error('ไม่พบรูปสำหรับ OCR');
+  }
+
   const res = await fetch('/api/ocr', {
     method: 'POST',
     headers: {
@@ -863,11 +867,23 @@ async function ocrImage(image, seatRows = []) {
     })
   });
 
-  const data = await res.json();
+  const raw = await res.text();
+
+  let data = {};
+
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new Error(
+        `OCR server ตอบกลับไม่ใช่ JSON (HTTP ${res.status})`
+      );
+    }
+  }
 
   if (!res.ok) {
     throw new Error(
-      data.error || 'OCR ไม่สำเร็จ'
+      data.error || `OCR ไม่สำเร็จ (HTTP ${res.status})`
     );
   }
 

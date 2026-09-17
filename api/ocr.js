@@ -33,12 +33,23 @@ export default async function handler(req, res) {
       })
     });
 
-    const result = await response.json();
+    const raw = await response.text();
+
+    let result = {};
+    try {
+      result = raw ? JSON.parse(raw) : {};
+    } catch {
+      console.error('OCR.Space non-JSON response:', raw.slice(0, 1000));
+
+      return res.status(502).json({
+        error: `OCR.Space ตอบกลับไม่ใช่ JSON (HTTP ${response.status})`
+      });
+    }
 
     if (!response.ok || result.IsErroredOnProcessing) {
       console.error('OCR.Space error:', JSON.stringify(result, null, 2));
 
-      return res.status(500).json({
+      return res.status(502).json({
         error:
           result.ErrorMessage?.[0] ||
           result.ErrorDetails ||
