@@ -16,7 +16,9 @@ export default async function handler(req, res) {
       });
     }
 
-    const response = await fetch('https://api.ocr.space/parse/image', {
+    const ocrHost = 'https://' + 'api.ocr.space';
+    const ocrEndpoint = ocrHost + '/parse/image';
+    const response = await fetch(ocrEndpoint, {
       method: 'POST',
       headers: {
         apikey: process.env.OCR_SPACE_API_KEY,
@@ -36,10 +38,14 @@ export default async function handler(req, res) {
     const raw = await response.text();
 
     let result = {};
+
     try {
       result = raw ? JSON.parse(raw) : {};
     } catch {
-      console.error('OCR.Space non-JSON response:', raw.slice(0, 1000));
+      console.error(
+        'OCR.Space non-JSON response:',
+        raw.slice(0, 1000)
+      );
 
       return res.status(502).json({
         error: `OCR.Space ตอบกลับไม่ใช่ JSON (HTTP ${response.status})`
@@ -47,7 +53,10 @@ export default async function handler(req, res) {
     }
 
     if (!response.ok || result.IsErroredOnProcessing) {
-      console.error('OCR.Space error:', JSON.stringify(result, null, 2));
+      console.error(
+        'OCR.Space error:',
+        JSON.stringify(result, null, 2)
+      );
 
       return res.status(502).json({
         error:
@@ -72,6 +81,8 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
+    console.error('OCR handler error:', error);
+
     return res.status(500).json({
       error: error.message || 'OCR failed'
     });
